@@ -3,3 +3,8 @@ requests
 python-docx
 beautifulsoup4
 pypdf
+toml
+groq
+selenium
+webdriver-manager
+# Adicione outras dependências se necessário
