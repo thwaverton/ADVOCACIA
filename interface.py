@@ -290,7 +290,79 @@ def reset_for_new_fatos():
 
 
 # --- Componentes da Interface (UI) ---
+# ... (outras partes do código) ...
 def render_sidebar(available_groq_models):
+    with st.sidebar:
+        st.header("🔑 Configurações API")
+
+        groq_api_key = st.secrets.get("groq_api_key")
+        chatvolt_api_key = st.secrets.get("chatvolt_api_key")
+        chatvolt_agent_id = st.secrets.get("chatvolt_agent_id")
+
+        if groq_api_key:
+            st.success("Chave API Groq: Carregada") # Removido `secrets.toml` para brevidade
+        else:
+            st.error("Chave API Groq: Não encontrada")
+            st.caption("Adicione `groq_api_key` a `.streamlit/secrets.toml`")
+
+        st.markdown("---")
+        st.header("Chatvolt")
+        if chatvolt_api_key:
+            st.success("Chave API Chatvolt: Carregada")
+        else:
+            st.error("Chave API Chatvolt: Não encontrada")
+            st.caption("Adicione `chatvolt_api_key` a `.streamlit/secrets.toml`")
+
+        if chatvolt_agent_id:
+            st.success(f"ID Agente Chatvolt: Carregado") # Removido trecho do ID
+        else:
+            st.error("ID Agente Chatvolt: Não encontrado")
+            st.caption("Adicione `chatvolt_agent_id` a `.streamlit/secrets.toml`")
+
+        st.markdown("---")
+        st.header("Modelos Groq")
+        # ... (lógica dos modelos Groq existente) ...
+        selected_model_session = st.session_state.get("selected_groq_model_global") #
+        current_model_index = 0 #
+
+        if available_groq_models: #
+            if selected_model_session and selected_model_session in available_groq_models: #
+                current_model_index = available_groq_models.index(selected_model_session) #
+            elif COMMON_GROQ_MODELS[0] in available_groq_models: #
+                current_model_index = available_groq_models.index(COMMON_GROQ_MODELS[0]) #
+            st.session_state.selected_groq_model_global = st.selectbox( #
+                "Escolha o modelo Groq para chat:", #
+                options=available_groq_models, #
+                index=current_model_index, #
+                key="sb_groq_model_selector" #
+            )
+        elif groq_api_key: #
+            st.warning("Não foi possível carregar modelos Groq. Verifique a chave API ou a conexão.") #
+            st.session_state.selected_groq_model_global = None #
+        else: #
+            st.info("Modelos Groq aparecerão aqui após configurar a chave API.") #
+            st.session_state.selected_groq_model_global = None #
+
+
+        st.markdown("---")
+        st.header("Navegação Principal") # Novo subcabeçalho para clareza
+        if st.button("Registrar Novos Fatos", key="reset_sidebar_button", help="Limpar dados atuais e registrar novos fatos."): # Adicionado help
+            reset_for_new_fatos()
+        
+        if st.button("⚖️ Buscar Jurisprudência (TJGO)", key="btn_to_jurisprudencia_search", help="Pesquisar na base de jurisprudência do TJGO."): # Adicionado help
+            navigate_to("busca_jurisprudencia")
+            st.rerun() # Este rerun para navegação é geralmente OK
+
+        st.markdown("---")
+        st.caption("Assistente Jurídico v1.0") # Apenas um caption no final
+
+    return {
+        "groq_api_key": groq_api_key,
+        "chatvolt_api_key": chatvolt_api_key,
+        "chatvolt_agent_id": chatvolt_agent_id,
+        "selected_groq_model": st.session_state.selected_groq_model_global
+    }
+# ... (restante do código) ...
     with st.sidebar:
         st.header("🔑 Configurações API")
 
@@ -368,8 +440,132 @@ def render_sidebar(available_groq_models):
 # interface.py
 # ... (seu código existente) ...
 
-def render_busca_jurisprudencia_page(app_configs): # app_configs pode não ser usado aqui, mas mantemos por padrão
+# No arquivo interface.py
+# ... (outras partes do código) ...
+
+def render_busca_jurisprudencia_page(app_configs):
     st.title("⚖️ Busca de Jurisprudência - TJGO")
+    st.markdown("Insira o termo que deseja pesquisar na base de jurisprudência do TJGO.")
+
+    termo_busca_input = st.text_input(
+        "Termo de busca:",
+        value=st.session_state.get("termo_jurisprudencia", ""),
+        key="termo_jurisprudencia_input_key"
+    )
+    if termo_busca_input != st.session_state.get("termo_jurisprudencia"):
+        st.session_state.termo_jurisprudencia = termo_busca_input
+        # Um rerun aqui pode ser desnecessário se o botão de busca for a ação principal
+        # st.rerun()
+
+    if st.button("Buscar Jurisprudência", key="btn_buscar_jurisprudencia_action"):
+        if not st.session_state.termo_jurisprudencia.strip():
+            st.warning("Por favor, insira um termo para a busca.")
+        else:
+            # Não fazer rerun aqui. Deixar o spinner controlar a próxima renderização.
+            st.session_state.buscando_jurisprudencia = True
+            st.session_state.resultados_jurisprudencia = None
+            # st.rerun() # REMOVER ESTE RERUN
+
+    if st.session_state.get("buscando_jurisprudencia"):
+        termo_para_busca = st.session_state.termo_jurisprudencia
+        # Usar st.status para uma melhor experiência com o spinner
+        with st.status(f"Buscando jurisprudência para: '{termo_para_busca}'...", expanded=True) as status_ui:
+            try:
+                st.write(f"Iniciando busca no TJGO para: {termo_para_busca}")
+                script_path = os.path.join(os.path.dirname(__file__), 'jurisprudencia.py')
+                if not os.path.exists(script_path):
+                    st.error(f"Script 'jurisprudencia.py' não encontrado em: {script_path}")
+                    st.session_state.resultados_jurisprudencia = [{"erro_interno": "jurisprudencia.py não encontrado."}]
+                else:
+                    process = subprocess.run(
+                        [sys.executable, script_path, termo_para_busca],
+                        capture_output=True, text=True, check=False, encoding='utf-8', timeout=120
+                    )
+                    if process.returncode != 0:
+                        st.error(f"Script de busca falhou. Erro: {process.stderr}")
+                        st.session_state.resultados_jurisprudencia = [{"erro_subprocess": f"Erro script: {process.stderr}"}]
+                    else:
+                        resultados_raw = process.stdout
+                        try:
+                            resultados_json = json.loads(resultados_raw)
+                            st.session_state.resultados_jurisprudencia = resultados_json
+                            st.write("Busca concluída. Processando resultados...")
+                        except json.JSONDecodeError:
+                            st.error(f"Erro ao decodificar JSON do script: {resultados_raw}")
+                            st.session_state.resultados_jurisprudencia = [{"erro_json_decode": f"Falha JSON: {resultados_raw}"}]
+                status_ui.update(label="Busca finalizada!", state="complete")
+
+            except subprocess.TimeoutExpired:
+                st.error("A busca de jurisprudência demorou muito (timeout).")
+                st.session_state.resultados_jurisprudencia = [{"erro_timeout": "Busca excedeu o tempo limite."}]
+                status_ui.update(label="Timeout na busca!", state="error")
+            except FileNotFoundError: # Redundante se o check os.path.exists for feito
+                st.error("Erro: Script 'jurisprudencia.py' não encontrado.")
+                st.session_state.resultados_jurisprudencia = [{"erro_interno": "jurisprudencia.py não encontrado."}]
+                status_ui.update(label="Erro de arquivo!", state="error")
+            except Exception as e:
+                st.error(f"Erro inesperado na busca: {str(e)}")
+                st.session_state.resultados_jurisprudencia = [{"erro_inesperado": str(e)}]
+                status_ui.update(label="Erro inesperado!", state="error")
+            finally:
+                st.session_state.buscando_jurisprudencia = False
+                # O st.rerun() AQUI É O MAIS CRÍTICO A SER CONSIDERADO.
+                # Se a atualização do session_state for suficiente para o Streamlit
+                # re-renderizar a exibição dos resultados, este rerun pode não ser necessário
+                # ou pode ser a causa do problema "removeChild".
+                # Tente comentar este rerun primeiro. Se a UI não atualizar
+                # com os resultados, então ele pode ser necessário, mas pode precisar
+                # de uma lógica mais cuidadosa.
+                # st.rerun() # <= TENTE COMENTAR ESTE PRIMEIRO
+
+    # Exibe os resultados após a busca (esta parte permanece a mesma)
+    if not st.session_state.get("buscando_jurisprudencia") and st.session_state.get("resultados_jurisprudencia") is not None:
+        resultados = st.session_state.get("resultados_jurisprudencia")
+        st.subheader("Resultados da Busca:")
+        if isinstance(resultados, list) and resultados:
+            # ... (lógica de exibição de resultados existente) ...
+            has_actual_results = False
+            for i, res in enumerate(resultados):
+                error_keys = ["erro_driver", "erro_geral", "erro_subprocess", "erro_json_decode", "erro_interno", "erro_inesperado", "erro_timeout"]
+                found_error = False
+                for key_err in error_keys: # Renomear variável de loop para evitar conflito
+                    if key_err in res:
+                        st.error(f"Erro na busca: {res[key_err]}")
+                        if key_err == "erro_driver": st.info("Verifique Google Chrome / ChromeDriver.")
+                        found_error = True
+                        break
+                if found_error: continue
+
+                if "info" in res:
+                    st.info(res["info"])
+                    continue
+
+                has_actual_results = True
+                st.markdown(f"---")
+                with st.container(border=True): # 'border' é um bom parâmetro
+                    st.markdown(f"**Resultado {res.get('id', i+1)}**")
+                    if "texto" in res and res["texto"]:
+                        st.text_area(f"Conteúdo do Resultado {res.get('id', i+1)}:", value=res["texto"], height=200, key=f"juris_text_display_{res.get('id', i)}", disabled=True)
+                    elif "erro" in res:
+                        st.warning(f"Falha ao obter conteúdo do resultado {res.get('id', i+1)}: {res['erro']}")
+                    else:
+                        st.warning(f"Resultado {res.get('id', i+1)} em formato inesperado ou sem conteúdo.")
+            if not has_actual_results and not any("info" in r for r in resultados if isinstance(r, dict)):
+                 st.info("A busca foi concluída, mas não retornou jurisprudências ou houve apenas mensagens de erro.")
+
+        elif not resultados:
+             st.info("A busca não retornou dados.")
+        else:
+            st.warning("Formato de resultados da busca inesperado.")
+
+    st.markdown("---")
+    if st.button("Voltar para Registro de Fatos", key="btn_juris_to_fatos"):
+        st.session_state.termo_jurisprudencia = ""
+        st.session_state.resultados_jurisprudencia = None
+        st.session_state.buscando_jurisprudencia = False
+        navigate_to("input_fatos")
+        st.rerun() # Este rerun para navegação é geralmente OK.
+# ... (restante do código) ...    st.title("⚖️ Busca de Jurisprudência - TJGO")
     st.markdown("Insira o termo que deseja pesquisar na base de jurisprudência do TJGO.")
 
     # Usar st.session_state.get para o valor inicial do input text
