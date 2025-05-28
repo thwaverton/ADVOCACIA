@@ -568,12 +568,17 @@ def render_busca_jurisprudencia_page(app_configs):
 # ... (restante do código) ...    st.title("⚖️ Busca de Jurisprudência - TJGO")
     st.markdown("Insira o termo que deseja pesquisar na base de jurisprudência do TJGO.")
 
-    # Usar st.session_state.get para o valor inicial do input text
-    termo_busca_input = st.text_input(
+# interface.py, aproximadamente na linha 572
+def render_busca_jurisprudencia_page(app_configs):
+    st.title("⚖️ Busca de Jurisprudência - TJGO")
+    st.markdown("Insira o termo que deseja pesquisar na base de jurisprudência do TJGO.")
+
+    termo_busca_input = st.text_input( # ESTE É O WIDGET CAUSANDO O ERRO
         "Termo de busca:",
         value=st.session_state.get("termo_jurisprudencia", ""),
-        key="termo_jurisprudencia_input_key" # Adicionar uma chave única
+        key="termo_jurisprudencia_input_key" # ESTA CHAVE ESTÁ DUPLICADA
     )
+    # ... restante da função ...
     # Atualizar o estado da sessão se o valor do input mudar
     if termo_busca_input != st.session_state.get("termo_jurisprudencia"):
         st.session_state.termo_jurisprudencia = termo_busca_input
