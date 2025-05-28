@@ -354,6 +354,9 @@ def render_sidebar(available_groq_models):
         if st.button("⚖️ Buscar Jurisprudência (TJGO)", key="btn_to_jurisprudencia_search"):
             navigate_to("busca_jurisprudencia")
             st.rerun()
+        st.markdown("---")
+        st.caption("Assistente Jurídico")
+    # ... (resto do código da sidebar) ...
 
     return {
         "groq_api_key": groq_api_key,
