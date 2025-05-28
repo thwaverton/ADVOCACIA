@@ -6,6 +6,9 @@ import requests
 from io import BytesIO
 from docx import Document
 from bs4 import BeautifulSoup, NavigableString
+import sys 
+import subprocess
+import json
 import os  # Importado para lidar com nomes de arquivo na transcrição
 from pypdf import PdfReader  # <<< NOVO: Para ler PDFs
 import toml  # Para verificar se o arquivo secrets.toml existe e tem as chaves (opcional, mas bom para feedback)
@@ -254,7 +257,11 @@ def initialize_session_state():
         "groq_messages": [],
         # Chaves API e Agent ID não são mais armazenadas no session_state globalmente,
         # serão lidas de st.secrets e passadas via app_configs
-        "selected_groq_model_global": st.session_state.get("selected_groq_model_global", None)
+        "selected_groq_model_global": st.session_state.get("selected_groq_model_global", None),
+         # NOVOS ESTADOS PARA BUSCA DE JURISPRUDÊNCIA
+        "termo_jurisprudencia": "",
+        "resultados_jurisprudencia": None,
+        "buscando_jurisprudencia": False  # Para controlar o spinner e a lógica de busca
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -343,6 +350,10 @@ def render_sidebar(available_groq_models):
             reset_for_new_fatos()
         st.markdown("---")
         st.caption("Assistente Jurídico")
+                # NOVO BOTÃO PARA BUSCA DE JURISPRUDÊNCIA
+        if st.button("⚖️ Buscar Jurisprudência (TJGO)", key="btn_to_jurisprudencia_search"):
+            navigate_to("busca_jurisprudencia")
+            st.rerun()
 
     return {
         "groq_api_key": groq_api_key,
@@ -351,7 +362,119 @@ def render_sidebar(available_groq_models):
         "selected_groq_model": st.session_state.selected_groq_model_global
     }
 
+# interface.py
+# ... (seu código existente) ...
 
+def render_busca_jurisprudencia_page(app_configs): # app_configs pode não ser usado aqui, mas mantemos por padrão
+    st.title("⚖️ Busca de Jurisprudência - TJGO")
+    st.markdown("Insira o termo que deseja pesquisar na base de jurisprudência do TJGO.")
+
+    # Usar st.session_state.get para o valor inicial do input text
+    termo_busca_input = st.text_input(
+        "Termo de busca:",
+        value=st.session_state.get("termo_jurisprudencia", ""),
+        key="termo_jurisprudencia_input_key" # Adicionar uma chave única
+    )
+    # Atualizar o estado da sessão se o valor do input mudar
+    if termo_busca_input != st.session_state.get("termo_jurisprudencia"):
+        st.session_state.termo_jurisprudencia = termo_busca_input
+        # st.rerun() # Pode não ser necessário aqui, depende da interatividade desejada
+
+    if st.button("Buscar Jurisprudência", key="btn_buscar_jurisprudencia_action"):
+        if not st.session_state.termo_jurisprudencia.strip():
+            st.warning("Por favor, insira um termo para a busca.")
+        else:
+            st.session_state.buscando_jurisprudencia = True
+            st.session_state.resultados_jurisprudencia = None # Limpa resultados anteriores
+            st.rerun() # Para mostrar o spinner imediatamente
+
+    if st.session_state.get("buscando_jurisprudencia"):
+        termo_para_busca = st.session_state.termo_jurisprudencia
+        with st.spinner(f"Buscando jurisprudência para: '{termo_para_busca}'... Aguarde, isso pode levar alguns instantes."):
+            try:
+                # Certifique-se que 'jurisprudencia.py' está no mesmo diretório
+                # Usar sys.executable para garantir que o mesmo interpretador Python seja usado
+                process = subprocess.run(
+                    [sys.executable, 'jurisprudencia.py', termo_para_busca],
+                    capture_output=True,
+                    text=True,
+                    check=True, # Lança CalledProcessError se o script retornar um código de erro
+                    encoding='utf-8' # Importante para caracteres especiais
+                )
+                resultados_raw = process.stdout
+                try:
+                    resultados_json = json.loads(resultados_raw)
+                    st.session_state.resultados_jurisprudencia = resultados_json
+                except json.JSONDecodeError:
+                    st.error(f"Erro ao decodificar a resposta JSON do script de jurisprudência. Resposta recebida:\n{resultados_raw}")
+                    st.session_state.resultados_jurisprudencia = [{"erro_json_decode": f"Falha na decodificação JSON. Resposta: {resultados_raw}"}]
+
+            except subprocess.CalledProcessError as e:
+                st.error("Ocorreu um erro ao executar a busca de jurisprudência.")
+                st.error(f"Detalhes do erro do script:\n{e.stderr}")
+                st.session_state.resultados_jurisprudencia = [{"erro_subprocess": f"Erro no script: {e.stderr}"}]
+            except FileNotFoundError:
+                st.error("Erro: O script 'jurisprudencia.py' não foi encontrado. Certifique-se de que ele está no mesmo diretório que esta aplicação.")
+                st.session_state.resultados_jurisprudencia = [{"erro_interno": "Script jurisprudencia.py não encontrado."}]
+            except Exception as e:
+                st.error(f"Um erro inesperado ocorreu durante a busca: {str(e)}")
+                st.session_state.resultados_jurisprudencia = [{"erro_inesperado": str(e)}]
+            finally:
+                st.session_state.buscando_jurisprudencia = False
+                st.rerun() # Para exibir os resultados ou erros e remover o spinner
+
+    # Exibe os resultados após a busca
+    if not st.session_state.get("buscando_jurisprudencia") and st.session_state.get("resultados_jurisprudencia") is not None:
+        resultados = st.session_state.get("resultados_jurisprudencia")
+        st.subheader("Resultados da Busca:")
+        if isinstance(resultados, list) and resultados:
+            for i, res in enumerate(resultados):
+                # Verifica os tipos de erro primeiro
+                if "erro_driver" in res:
+                    st.error(f"Erro Crítico na Busca (WebDriver): {res['erro_driver']}")
+                    st.info("Verifique se o Google Chrome está instalado e se não há problemas com o ChromeDriver.")
+                    break
+                if "erro_geral" in res:
+                    st.error(f"Erro Geral na Busca: {res['erro_geral']}")
+                    break
+                if "erro_subprocess" in res:
+                    st.error(f"Erro na Execução do Script de Busca: {res['erro_subprocess']}")
+                    break
+                if "erro_json_decode" in res:
+                    st.error(f"Erro Interno (JSON Decode): {res['erro_json_decode']}")
+                    break
+                if "erro_interno" in res: # Erros como FileNotFoundError
+                    st.error(f"Erro Interno: {res['erro_interno']}")
+                    break
+                if "erro_inesperado" in res:
+                    st.error(f"Erro Inesperado: {res['erro_inesperado']}")
+                    break
+                if "info" in res: # Mensagens informativas como "nenhum resultado"
+                    st.info(res["info"])
+                    break
+
+                # Se chegou aqui, é um resultado válido ou um erro de processamento de bloco
+                st.markdown(f"--- **Resultado {res.get('id', i+1)}** ---")
+                if "texto" in res and res["texto"]:
+                    st.text_area(f"Jurisprudência {res.get('id', i+1)}:", value=res["texto"], height=250, key=f"juris_text_{i}", disabled=True)
+                elif "erro" in res: # Erro específico ao processar um bloco
+                    st.warning(f"Falha ao processar o conteúdo do resultado {res.get('id', i+1)}: {res['erro']}")
+                else: # Caso algum resultado venha em formato inesperado, sem 'texto' ou 'erro'
+                    st.warning(f"Resultado {res.get('id', i+1)} em formato inesperado ou sem conteúdo.")
+        elif not resultados: # Lista vazia, pode acontecer se o script retornar []
+             st.info("A busca não retornou resultados ou a lista de resultados está vazia.")
+        else: # Não é lista ou é None (embora a lógica acima deva cobrir None)
+            st.warning("Formato de resultados da busca inesperado.")
+
+    st.markdown("---")
+    if st.button("Voltar para Registro de Fatos", key="btn_juris_to_fatos"):
+        # Limpar estados da página de jurisprudência ao sair
+        st.session_state.termo_jurisprudencia = ""
+        st.session_state.resultados_jurisprudencia = None
+        st.session_state.buscando_jurisprudencia = False
+        navigate_to("input_fatos")
+        st.rerun()
+# ... (seu código existente) ...
 def render_fatos_input_page(app_configs):
     st.title("📝 Registro de Fatos")
     st.markdown("Descreva os fatos ou utilize as opções abaixo para transcrever áudios e anexar documentos.")
@@ -751,6 +874,9 @@ def main():
         render_chat_selection_page(app_configs)  # Passa app_configs para verificar se as chaves estão carregadas
     elif page_key == "chat_view":
         render_chat_view_page(app_configs)  # Passa app_configs para uso nas chamadas de API
+    # NOVA ROTA PARA BUSCA DE JURISPRUDÊNCIA
+    elif page_key == "busca_jurisprudencia":
+        render_busca_jurisprudencia_page(app_configs) # Passando app_configs por consistência
     else:
         st.error("Página desconhecida.")
         navigate_to("input_fatos")  # Volta para a página inicial em caso de erro
